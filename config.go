@@ -3,11 +3,31 @@ package main
 import (
 	"fmt"
 	"github.com/alecthomas/kong"
+	"github.com/pkg/errors"
+	"net"
+	"regexp"
 )
 
+var tunExp = regexp.MustCompile("tun[0-9]+")
+var tapExp = regexp.MustCompile("tap[0-9]+")
+var hostExp = regexp.MustCompile(
+	"^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])\\.)*" +
+		"([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]*[a-zA-Z0-9])$",
+)
+
+// Validate CIDR
+func validateCIDR(subnets []string) bool {
+	if len(subnets) > 0 {
+		for _, cidr := range subnets {
+			if _, _, err := net.ParseCIDR(cidr); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 type Globals struct {
-	Config string `short:"c" default:"/etc/sshpn.conf" type:"existingfile" help:"Location of client config file"`
-	// LogLevel string      `short:"l" help:"Set the logging level (debug|info|warn|error|fatal)" default:"info"`
 	Version VersionFlag `name:"version" help:"Print version information and quit"`
 	Verbose bool        `short:"v" help:"Increase verbosity"`
 }
@@ -17,6 +37,7 @@ type VersionFlag string
 func (v VersionFlag) Decode(ctx *kong.DecodeContext) error { return nil }
 func (v VersionFlag) IsBool() bool                         { return true }
 func (v VersionFlag) BeforeApply(app *kong.Kong, vars kong.Vars) error {
+	// TODO figure out why this is empty
 	fmt.Println(vars["version"])
 	app.Exit(0)
 	return nil
@@ -32,6 +53,23 @@ type TunCmd struct {
 }
 
 func (t *TunCmd) Run(globals *Globals) error {
+	// Validate all inputs so command injection isn't possible
+	// Validate name
+	if !tunExp.Match([]byte(t.Name)) {
+		return errors.New("invalid name, must be of format tun[0-9]+")
+	}
+
+	// Validate ip
+	if net.ParseIP(t.Laddr) == nil {
+		return errors.New(fmt.Sprintf("invalid ip address '%s'", t.Laddr))
+	} else if net.ParseIP(t.Raddr) == nil {
+		return errors.New(fmt.Sprintf("invalid ip address '%s'", t.Raddr))
+	}
+
+	if !validateCIDR(t.ExcludeSubnets) || !validateCIDR(t.Subnets) {
+		return errors.New("invalid subnet, must use cidr notation")
+	}
+
 	return nil
 }
 
@@ -42,12 +80,17 @@ type TapCmd struct {
 }
 
 func (t *TapCmd) Run(globals *Globals) error {
+	// Validate all inputs so command injection isn't possible
+	// Validate name
+	if !tapExp.Match([]byte(t.Name)) {
+		return errors.New("invalid name, must be of format tap[0-9]+")
+	}
 	return nil
 }
 
 type ProxyCmd struct {
 	Host           string   `short:"h" default:"localhost" help:"The host of the proxy server"`
-	Port           uint16   `short:"p" default:"1080" help:"The host of the proxy server"`
+	Port           uint16   `short:"p" default:"1080" help:"The port of the proxy server"`
 	All            bool     `short:"a" xor:"all" help:"All tcp traffic will be routed through this interface and the rest dropped"`
 	UDP            bool     `short:"u" help:"The remote supports udp, so all udp will be forwarded as well (not supported by ssh -D)"`
 	ExcludeSubnets []string `short:"e" xor:"subnets" help:"List of subnets to route locally if using the all option"`
@@ -55,6 +98,13 @@ type ProxyCmd struct {
 }
 
 func (p *ProxyCmd) Run(globals *Globals) error {
+	if !hostExp.Match([]byte(p.Host)) && net.ParseIP(p.Host) == nil {
+		return errors.New("invalid hostname")
+	}
+
+	if !validateCIDR(p.ExcludeSubnets) || !validateCIDR(p.Subnets) {
+		return errors.New("invalid subnet, must use cidr notation")
+	}
 	return nil
 }
 
