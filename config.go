@@ -28,8 +28,9 @@ func validateCIDR(subnets []string) bool {
 }
 
 type Globals struct {
-	Version VersionFlag `name:"version" help:"Print version information and quit"`
-	Verbose bool        `short:"v" help:"Increase verbosity"`
+	Version        VersionFlag `help:"Print version information and quit"`
+	Verbose        bool        `short:"v" help:"Increase verbosity"`
+	SocketLocation string      `short:"S" default:"/root/.ssh/socket/%h:%p" help:"Location of master ssh multiplex socket"`
 }
 
 type VersionFlag string
@@ -43,6 +44,24 @@ func (v VersionFlag) BeforeApply(app *kong.Kong, vars kong.Vars) error {
 	return nil
 }
 
+type State struct {
+	State string   `arg:"" help:"Start or stop a tunnel"`
+	Host  string   `arg:"" passthrough:"" help:"The host you're connecting to via ssh'"`
+	Args  []string `arg:"" optional:"" help:"Any commands or flags you'd like to pass to ssh"`
+}
+
+func (s *State) Validate() error {
+	if s.State != "start" && s.State != "stop" {
+		return errors.New("invalid state, must be 'start' or 'stop'")
+	}
+	if !hostExp.Match([]byte(s.Host)) && net.ParseIP(s.Host) == nil {
+		return errors.New("invalid hostname")
+	}
+
+	// Local command injection possible on args, but ignore it because it's too annoying to fix
+	return nil
+}
+
 type TunCmd struct {
 	Name           string   `short:"n" default:"tun0" help:"The name of the tun device on each system"`
 	Laddr          string   `short:"l" default:"10.32.32.2" help:"The local address used in the tunnel"`
@@ -50,9 +69,10 @@ type TunCmd struct {
 	All            bool     `short:"a" xor:"subnets" help:"All traffic will be routed through this interface"`
 	ExcludeSubnets []string `short:"e" help:"List of subnets to route locally if using the all option"`
 	Subnets        []string `short:"s" xor:"subnets" help:"List of subnets to add as routes through the tun"`
+	State          State    `arg:""`
 }
 
-func (t *TunCmd) Run(globals *Globals) error {
+func (t *TunCmd) Validate() error {
 	// Validate all inputs so command injection isn't possible
 	// Validate name
 	if !tunExp.Match([]byte(t.Name)) {
@@ -73,19 +93,29 @@ func (t *TunCmd) Run(globals *Globals) error {
 	return nil
 }
 
-type TapCmd struct {
-	Name string `short:"n" default:"tap0" help:"The name of the tap device on each system"`
-	All  bool   `short:"a" help:"All traffic will be routed through this interface"`
-	DHCP bool   `short:"d" help:"Once the tap devices are up, dhcp will be used to get an ip on the client"`
+func (t *TunCmd) Run(globals *Globals) error {
+	return tun()
 }
 
-func (t *TapCmd) Run(globals *Globals) error {
+type TapCmd struct {
+	Name  string `short:"n" default:"tap0" help:"The name of the tap device on each system"`
+	All   bool   `short:"a" help:"All traffic will be routed through this interface"`
+	DHCP  bool   `short:"d" help:"Once the tap devices are up, dhcp will be used to get an ip on the client"`
+	State State  `arg:""`
+}
+
+func (t *TapCmd) Validate() error {
 	// Validate all inputs so command injection isn't possible
 	// Validate name
 	if !tapExp.Match([]byte(t.Name)) {
 		return errors.New("invalid name, must be of format tap[0-9]+")
 	}
+
 	return nil
+}
+
+func (t *TapCmd) Run(globals *Globals) error {
+	return tap()
 }
 
 type ProxyCmd struct {
@@ -95,9 +125,10 @@ type ProxyCmd struct {
 	UDP            bool     `short:"u" help:"The remote supports udp, so all udp will be forwarded as well (not supported by ssh -D)"`
 	ExcludeSubnets []string `short:"e" xor:"subnets" help:"List of subnets to route locally if using the all option"`
 	Subnets        []string `short:"s" xor:"all,subnets" help:"List of subnets to add as routes through the proxy"`
+	State          State    `arg:""`
 }
 
-func (p *ProxyCmd) Run(globals *Globals) error {
+func (p *ProxyCmd) Validate() error {
 	if !hostExp.Match([]byte(p.Host)) && net.ParseIP(p.Host) == nil {
 		return errors.New("invalid hostname")
 	}
@@ -105,12 +136,17 @@ func (p *ProxyCmd) Run(globals *Globals) error {
 	if !validateCIDR(p.ExcludeSubnets) || !validateCIDR(p.Subnets) {
 		return errors.New("invalid subnet, must use cidr notation")
 	}
+
 	return nil
+}
+
+func (t *ProxyCmd) Run(globals *Globals) error {
+	return proxy()
 }
 
 type CLI struct {
 	Globals
-	Tun   TunCmd   `cmd:"" help:"Used to configure a L3 vpn"`
-	Tap   TapCmd   `cmd:"" help:"Used to configure a L2 vpn"`
-	Proxy ProxyCmd `cmd:"" help:"Used to create a transparent proxy"`
+	Tun   TunCmd   `cmd:"" required:"" help:"Used to configure a L3 vpn"`
+	Tap   TapCmd   `cmd:"" required:"" help:"Used to configure a L2 vpn"`
+	Proxy ProxyCmd `cmd:"" required:"" help:"Used to create a transparent proxy"`
 }
