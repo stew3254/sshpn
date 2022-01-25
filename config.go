@@ -28,9 +28,10 @@ func validateCIDR(subnets []string) bool {
 }
 
 type Globals struct {
-	Version        VersionFlag `help:"Print version information and quit"`
-	Verbose        bool        `short:"v" help:"Increase verbosity"`
-	SocketLocation string      `short:"S" default:"/root/.ssh/socket/%h:%p" help:"Location of master ssh multiplex socket"`
+	Version VersionFlag `help:"Print version information and quit"`
+	Verbose bool        `short:"v" help:"Increase verbosity"`
+	Quiet   bool        `short:"q" help:"Minimize command output"`
+	Socket  string      `short:"S" default:"/root/.ssh/socket/%h:%p" help:"Location of master ssh multiplex socket"`
 }
 
 type VersionFlag string
@@ -45,9 +46,8 @@ func (v VersionFlag) BeforeApply(app *kong.Kong, vars kong.Vars) error {
 }
 
 type State struct {
-	State string   `arg:"" help:"Start or stop a tunnel"`
-	Host  string   `arg:"" passthrough:"" help:"The host you're connecting to via ssh'"`
-	Args  []string `arg:"" optional:"" help:"Any commands or flags you'd like to pass to ssh"`
+	State string `arg:"" help:"Start or stop a tunnel"`
+	Host  string `arg:"" passthrough:"" help:"The host you're connecting to via ssh'"`
 }
 
 func (s *State) Validate() error {
@@ -58,14 +58,13 @@ func (s *State) Validate() error {
 		return errors.New("invalid hostname")
 	}
 
-	// Local command injection possible on args, but ignore it because it's too annoying to fix
 	return nil
 }
 
 type TunCmd struct {
 	Name           string   `short:"n" default:"tun0" help:"The name of the tun device on each system"`
-	Laddr          string   `short:"l" default:"10.32.32.2" help:"The local address used in the tunnel"`
-	Raddr          string   `short:"r" default:"10.32.32.1" help:"The remote address for the tunnel"`
+	Laddr          string   `short:"l" default:"10.32.32.2" help:"The local address used in the tunnel. (Don't change this unless you know what you're doing)"`
+	Raddr          string   `short:"r" default:"10.32.32.1" help:"The remote address for the tunnel. (Don't change this unless you know what you're doing)"`
 	All            bool     `short:"a" xor:"subnets" help:"All traffic will be routed through this interface"`
 	ExcludeSubnets []string `short:"e" help:"List of subnets to route locally if using the all option"`
 	Subnets        []string `short:"s" xor:"subnets" help:"List of subnets to add as routes through the tun"`
@@ -94,7 +93,7 @@ func (t *TunCmd) Validate() error {
 }
 
 func (t *TunCmd) Run(globals *Globals) error {
-	return tun()
+	return nil
 }
 
 type TapCmd struct {
@@ -115,7 +114,7 @@ func (t *TapCmd) Validate() error {
 }
 
 func (t *TapCmd) Run(globals *Globals) error {
-	return tap()
+	return nil
 }
 
 type ProxyCmd struct {
@@ -140,8 +139,8 @@ func (p *ProxyCmd) Validate() error {
 	return nil
 }
 
-func (t *ProxyCmd) Run(globals *Globals) error {
-	return proxy()
+func (p *ProxyCmd) Run(globals *Globals) error {
+	return nil
 }
 
 type CLI struct {
